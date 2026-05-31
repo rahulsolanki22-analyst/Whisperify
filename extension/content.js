@@ -6,7 +6,7 @@
 // Global State
 let currentTrack = { title: "", artist: "" };
 let isSearching = false;
-let apiBaseUrl = "http://localhost:8080/api/v1";
+let apiBaseUrl = "https://whisperify-2.onrender.com/api/v1";
 let syncInterval = null;
 let activeTimestamps = null;
 let lastActiveIndex = -1;
