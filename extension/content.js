@@ -19,8 +19,8 @@ let syncOffset = parseFloat(localStorage.getItem("whisperify_sync_offset") || "0
 
 const isYouTube = window.location.hostname.includes("youtube.com");
 
-// DOM References
 let panelElement = null;
+let pipWindow = null;
 
 // Initialize on Script Load
 initWhisperify();
@@ -66,6 +66,7 @@ function injectFloatingPanel() {
         <span id="whisperify-sync-label" style="color: #1db954; font-weight: 700; min-width: 34px; text-align: center;" title="Latency compensation offset">0.80s</span>
         <button id="whisperify-sync-plus" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #ffffff; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: bold; transition: all 0.2s;" title="Show lyrics sooner">+</button>
       </div>
+      <button id="whisperify-pip-btn" style="background: none; border: none; color: #b3b3b3; cursor: pointer; padding: 4px; font-size: 13px; display: flex; align-items: center; justify-content: center; transition: color 0.2s ease; margin-right: 8px;" title="Pop out always-on-top window">⧉</button>
       <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
     </div>
     
@@ -141,6 +142,19 @@ function injectFloatingPanel() {
       syncOffset = Math.min(3.0, syncOffset + 0.05); // shift 50ms earlier
       localStorage.setItem("whisperify_sync_offset", syncOffset.toString());
       if (syncLabel) syncLabel.textContent = `${syncOffset.toFixed(2)}s`;
+    });
+  }
+
+  // Bind PiP toggle
+  const pipBtn = panelElement.querySelector("#whisperify-pip-btn");
+  if (pipBtn) {
+    pipBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      if (pipWindow) {
+        exitPiP();
+      } else {
+        await enterPiP();
+      }
     });
   }
 
@@ -771,7 +785,8 @@ function makePanelDraggable() {
   function dragMouseDown(e) {
     if (e.target.closest(".whisperify-toggle-btn") || 
         e.target.closest("#whisperify-sync-minus") || 
-        e.target.closest("#whisperify-sync-plus")) return;
+        e.target.closest("#whisperify-sync-plus") ||
+        e.target.closest("#whisperify-pip-btn")) return;
     
     e.preventDefault();
     pos3 = e.clientX;
@@ -823,4 +838,97 @@ function makePanelDraggable() {
       panelElement.classList.toggle("collapsed");
     }
   }
+}
+
+/**
+ * PiP (Picture-in-Picture) Window Controllers
+ */
+async function enterPiP() {
+  if (!('documentPictureInPicture' in window)) {
+    alert("Document Picture-in-Picture is not supported in this browser version. Please use Chrome or Edge.");
+    return;
+  }
+  
+  try {
+    const body = document.querySelector(".whisperify-body");
+    if (!body) return;
+    
+    pipWindow = await window.documentPictureInPicture.requestWindow({
+      width: panelElement.offsetWidth || 320,
+      height: panelElement.offsetHeight || 480
+    });
+    
+    // Copy stylesheets
+    [...document.styleSheets].forEach((styleSheet) => {
+      try {
+        const cssRules = [...styleSheet.cssRules].map(rule => rule.cssText).join('');
+        const style = pipWindow.document.createElement('style');
+        style.textContent = cssRules;
+        pipWindow.document.head.appendChild(style);
+      } catch (e) {
+        if (styleSheet.href) {
+          const link = pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = styleSheet.href;
+          pipWindow.document.head.appendChild(link);
+        }
+      }
+    });
+    
+    // Body setup
+    pipWindow.document.body.style.backgroundColor = "rgba(18, 18, 18, 1)";
+    pipWindow.document.body.style.margin = "0";
+    pipWindow.document.body.style.overflow = "hidden";
+    pipWindow.document.body.style.height = "100vh";
+    pipWindow.document.body.style.color = "#ffffff";
+    
+    const wrapper = pipWindow.document.createElement("div");
+    wrapper.className = "whisperify-panel";
+    wrapper.style.position = "static";
+    wrapper.style.width = "100vw";
+    wrapper.style.height = "100vh";
+    wrapper.style.border = "none";
+    wrapper.style.borderRadius = "0";
+    wrapper.style.backgroundColor = "transparent";
+    
+    wrapper.appendChild(body);
+    pipWindow.document.body.appendChild(wrapper);
+    
+    pipWindow.addEventListener("pagehide", () => {
+      exitPiP();
+    });
+    
+    panelElement.style.display = "none";
+    
+    const pipBtn = document.getElementById("whisperify-pip-btn");
+    if (pipBtn) pipBtn.style.color = "#1db954";
+    
+  } catch (err) {
+    console.error("Whisperify: Failed to open PiP window:", err);
+  }
+}
+
+function exitPiP() {
+  if (!pipWindow) return;
+  
+  try {
+    const wrapper = pipWindow.document.querySelector(".whisperify-panel");
+    const body = wrapper ? wrapper.querySelector(".whisperify-body") : null;
+    
+    if (body) {
+      panelElement.appendChild(body);
+    }
+  } catch (e) {
+    console.error("Whisperify: Error restoring lyrics body from PiP:", e);
+  }
+  
+  try {
+    pipWindow.close();
+  } catch (e) {}
+  
+  pipWindow = null;
+  panelElement.style.display = "flex";
+  
+  const pipBtn = document.getElementById("whisperify-pip-btn");
+  if (pipBtn) pipBtn.style.color = "#b3b3b3";
 }
