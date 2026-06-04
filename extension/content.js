@@ -436,7 +436,7 @@ async function fetchLyricsFromBackend(title, artist, scrapedLyricsText = null) {
 function displayLyrics(data) {
   // Synchronize payload to display clients if this is the active player
   if (isPlayerTab) {
-    chrome.runtime.sendMessage({
+    safeSendMessage({
       type: "UPDATE_LYRICS",
       lyricsData: data
     });
@@ -504,7 +504,7 @@ function displayLyrics(data) {
         renderActiveLyrics(selectedType);
         
         // Notify other displays of active script change
-        chrome.runtime.sendMessage({
+        safeSendMessage({
           type: "CHANGE_SCRIPT",
           scriptType: selectedType
         });
@@ -620,7 +620,7 @@ function startLyricsSync(timestamps) {
       const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
       
       // Update background with active playbar timeline progress
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "UPDATE_PLAYBACK",
         currentTime: currentTime,
         isYouTube: isYouTube,
@@ -807,12 +807,12 @@ function makePanelDraggable() {
     
     if (!isDragging) {
       const isCollapsed = panelElement.classList.toggle("collapsed");
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "TOGGLE_PANEL",
         collapsed: isCollapsed
       });
     } else {
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "MOVE_PANEL",
         top: panelElement.style.top,
         left: panelElement.style.left
@@ -993,8 +993,8 @@ function setupMessageListeners() {
  * Fetches current active synchronization states when content script initializes
  */
 function requestInitialSyncState() {
-  chrome.runtime.sendMessage({ type: "GET_SYNC_STATE" }, (state) => {
-    if (chrome.runtime.lastError || !state) return;
+  safeSendMessage({ type: "GET_SYNC_STATE" }, (state) => {
+    if (!state) return;
     
     if (panelElement && state.position) {
       panelElement.style.top = state.position.top;
@@ -1028,4 +1028,26 @@ function requestInitialSyncState() {
       }, 100);
     }
   });
+}
+
+/**
+ * Safely dispatches message to Chrome background extension context, catching invalidations
+ */
+function safeSendMessage(payload, callback = null) {
+  try {
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
+      if (callback) {
+        chrome.runtime.sendMessage(payload, (response) => {
+          if (chrome.runtime.lastError) {
+            return;
+          }
+          callback(response);
+        });
+      } else {
+        chrome.runtime.sendMessage(payload);
+      }
+    }
+  } catch (err) {
+    // Ignore context invalidations from extension updates/reloads gracefully
+  }
 }
