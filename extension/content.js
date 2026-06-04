@@ -547,7 +547,7 @@ function renderActiveLyrics(type) {
  * Initializes the real-time time-sync highlight loop (100ms high-precision polling rate)
  */
 function startLyricsSync(timestamps) {
-  const LATENCY_COMPENSATION = 0.55; // Compensate for Spotify React DOM time render lags (550ms)
+  const LATENCY_COMPENSATION = 0.80; // Compensate for Spotify React DOM time render lags (800ms)
   activeTimestamps = timestamps;
   lastActiveIndex = -1;
   
