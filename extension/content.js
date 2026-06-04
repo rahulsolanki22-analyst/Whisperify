@@ -406,6 +406,14 @@ async function fetchLyricsFromBackend(title, artist, scrapedLyricsText = null) {
  * Updates UI to present found lyrics and initialize playback sync
  */
 function displayLyrics(data) {
+  const hasLyrics = (data.timestamps && data.timestamps.length > 0) || (data.lyrics_text && data.lyrics_text.trim().length > 0);
+  
+  if (!hasLyrics) {
+    currentLyricsData = null;
+    showError("Lyrics not found in text databases.");
+    return;
+  }
+
   currentLyricsData = data;
   currentSelectedScript = "original";
   
@@ -661,6 +669,8 @@ function showError(message) {
   
   const retryBtn = document.getElementById("whisperify-retry-trigger");
   retryBtn.textContent = "Retry Search";
+  
+  currentLyricsData = null;
 }
 
 /**
