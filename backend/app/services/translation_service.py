@@ -1,6 +1,8 @@
 import logging
 from typing import Any, Dict, List, Optional, Tuple
 import httpx
+import unicodedata
+import re
 
 logger = logging.getLogger("whisperify.translation_service")
 
@@ -12,6 +14,25 @@ class TranslationService:
 
     def __init__(self):
         self.translate_url = "https://translate.googleapis.com/translate_a/single"
+
+    def clean_romanized_text(self, text: str) -> str:
+        """
+        Strips complex diacritics and combining marks (macrons, dots, accents) to produce
+        clean, standard English characters (Hinglish/Pinglish script).
+        """
+        if not text:
+            return text
+        
+        # Normalize to NFD form to separate base letters from diacritics
+        normalized = unicodedata.normalize('NFD', text)
+        
+        # Strip all combining marks (Mn category)
+        stripped = "".join(c for c in normalized if unicodedata.category(c) != 'Mn')
+        
+        # Replace word-internal glottal stop apostrophes (e.g. pā'uṇā -> pauna, pi'ara -> piara)
+        stripped = re.sub(r'(?<=[a-zA-Z])\'(?=[a-zA-Z])', '', stripped)
+        
+        return stripped
 
     def needs_transliteration_or_translation(self, text: str) -> bool:
         """
@@ -151,6 +172,9 @@ class TranslationService:
             romanized_lines.extend([""] * (target_count - len(romanized_lines)))
         elif len(romanized_lines) > target_count:
             romanized_lines = romanized_lines[:target_count]
+
+        # Clean romanized lines to convert them to Hinglish/Pinglish
+        romanized_lines = [self.clean_romanized_text(line) for line in romanized_lines]
 
         # 3. Re-assemble final outputs
         romanized_text = "\n".join(romanized_lines)
