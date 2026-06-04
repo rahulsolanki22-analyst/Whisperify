@@ -6,6 +6,9 @@
   "permissions": [
     "activeTab"
   ],
+  "background": {
+    "service_worker": "background.js"
+  },
   "host_permissions": [
     "http://localhost:8080/*",
     "https://whisperify-2.onrender.com/*",
@@ -16,9 +19,7 @@
   "content_scripts": [
     {
       "matches": [
-        "*://open.spotify.com/*",
-        "*://*.spotify.com/*",
-        "*://*.youtube.com/*"
+        "<all_urls>"
       ],
       "js": [
         "content.js"

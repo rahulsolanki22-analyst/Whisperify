@@ -16,6 +16,7 @@ let scrapedLyricsSent = false;
 let pipWindow = null;
 
 const isYouTube = window.location.hostname.includes("youtube.com");
+const isPlayerTab = window.location.hostname.includes("spotify.com") || window.location.hostname.includes("youtube.com");
 
 // DOM References
 let panelElement = null;
@@ -34,12 +35,20 @@ function initWhisperify() {
   } catch (err) {
     console.error("Whisperify: Failed to inject floating panel:", err);
   }
+
+  // Setup message listener bindings
+  setupMessageListeners();
   
-  try {
-    setupTrackObservers();
-    console.log("Whisperify: Observers initialized successfully.");
-  } catch (err) {
-    console.error("Whisperify: Failed to initialize observers:", err);
+  // Request active synchronization state
+  requestInitialSyncState();
+  
+  if (isPlayerTab) {
+    try {
+      setupTrackObservers();
+      console.log("Whisperify: Observers initialized successfully.");
+    } catch (err) {
+      console.error("Whisperify: Failed to initialize observers:", err);
+    }
   }
 }
 
@@ -425,6 +434,14 @@ async function fetchLyricsFromBackend(title, artist, scrapedLyricsText = null) {
  * Updates UI to present found lyrics and initialize playback sync
  */
 function displayLyrics(data) {
+  // Synchronize payload to display clients if this is the active player
+  if (isPlayerTab) {
+    chrome.runtime.sendMessage({
+      type: "UPDATE_LYRICS",
+      lyricsData: data
+    });
+  }
+
   const hasLyrics = (data.timestamps && data.timestamps.length > 0) || (data.lyrics_text && data.lyrics_text.trim().length > 0);
   
   if (!hasLyrics) {
@@ -485,6 +502,12 @@ function displayLyrics(data) {
         
         currentSelectedScript = selectedType;
         renderActiveLyrics(selectedType);
+        
+        // Notify other displays of active script change
+        chrome.runtime.sendMessage({
+          type: "CHANGE_SCRIPT",
+          scriptType: selectedType
+        });
       });
     });
   } else {
@@ -548,37 +571,66 @@ function renderActiveLyrics(type) {
 }
 
 /**
+ * Synchronizes playback position received from the active player tab
+ */
+function syncPlaybackPosition(currentTime, isYT) {
+  if (!activeTimestamps || activeTimestamps.length === 0) return;
+  const LATENCY_COMPENSATION = 0.35;
+  const adjustedTime = currentTime + (isYT ? 0.0 : LATENCY_COMPENSATION);
+  highlightLyricIndexForTime(adjustedTime);
+}
+
+/**
+ * Common highlight resolver based on adjusted seconds
+ */
+function highlightLyricIndexForTime(adjustedTime) {
+  let activeIndex = -1;
+  for (let i = 0; i < activeTimestamps.length; i++) {
+    if (adjustedTime >= activeTimestamps[i].time) {
+      activeIndex = i;
+    } else {
+      break;
+    }
+  }
+  
+  if (activeIndex !== -1 && activeIndex !== lastActiveIndex) {
+    highlightLyricLine(activeIndex);
+    lastActiveIndex = activeIndex;
+  }
+}
+
+/**
  * Initializes the real-time time-sync highlight loop (100ms high-precision polling rate)
  */
 function startLyricsSync(timestamps) {
-  const LATENCY_COMPENSATION = 0.35; // Compensate for Spotify React DOM time render lags (350ms)
   activeTimestamps = timestamps;
   lastActiveIndex = -1;
   
   if (syncInterval) clearInterval(syncInterval);
   
-  syncInterval = setInterval(() => {
-    if (!activeTimestamps || activeTimestamps.length === 0) return;
+  if (isPlayerTab) {
+    const LATENCY_COMPENSATION = 0.35;
     
-    const currentTime = getPlaybackPosition();
-    if (currentTime === null) return;
-    
-    const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
-    
-    let activeIndex = -1;
-    for (let i = 0; i < activeTimestamps.length; i++) {
-      if (adjustedTime >= activeTimestamps[i].time) {
-        activeIndex = i;
-      } else {
-        break;
-      }
-    }
-    
-    if (activeIndex !== -1 && activeIndex !== lastActiveIndex) {
-      highlightLyricLine(activeIndex);
-      lastActiveIndex = activeIndex;
-    }
-  }, 100);
+    syncInterval = setInterval(() => {
+      if (!activeTimestamps || activeTimestamps.length === 0) return;
+      
+      const currentTime = getPlaybackPosition();
+      if (currentTime === null) return;
+      
+      const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
+      
+      // Update background with active playbar timeline progress
+      chrome.runtime.sendMessage({
+        type: "UPDATE_PLAYBACK",
+        currentTime: currentTime,
+        isYouTube: isYouTube,
+        title: currentTrack.title,
+        artist: currentTrack.artist
+      });
+      
+      highlightLyricIndexForTime(adjustedTime);
+    }, 100);
+  }
 }
 
 /**
@@ -754,7 +806,17 @@ function makePanelDraggable() {
     document.onmousemove = null;
     
     if (!isDragging) {
-      panelElement.classList.toggle("collapsed");
+      const isCollapsed = panelElement.classList.toggle("collapsed");
+      chrome.runtime.sendMessage({
+        type: "TOGGLE_PANEL",
+        collapsed: isCollapsed
+      });
+    } else {
+      chrome.runtime.sendMessage({
+        type: "MOVE_PANEL",
+        top: panelElement.style.top,
+        left: panelElement.style.left
+      });
     }
   }
 }
@@ -869,4 +931,101 @@ function exitPiP() {
   
   const pipBtn = document.getElementById("whisperify-pip-trigger");
   if (pipBtn) pipBtn.style.color = "#b3b3b3";
+}
+
+/**
+ * Message receivers for background worker synchronized updates
+ */
+function setupMessageListeners() {
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (message.type === "SYNC_PLAYBACK") {
+      if (!isPlayerTab) {
+        currentTrack = { title: message.title, artist: message.artist };
+        syncPlaybackPosition(message.currentTime, message.isYouTube);
+      }
+    } 
+    
+    else if (message.type === "SYNC_LYRICS") {
+      console.log("Whisperify: Synced lyrics loaded from background.");
+      displayLyrics(message.lyricsData);
+    } 
+    
+    else if (message.type === "SYNC_SCRIPT") {
+      if (currentSelectedScript !== message.scriptType) {
+        currentSelectedScript = message.scriptType;
+        
+        const pills = document.querySelectorAll(".whisperify-pill");
+        pills.forEach(p => {
+          if (p.getAttribute("data-type") === message.scriptType) {
+            p.classList.add("active");
+          } else {
+            p.classList.remove("active");
+          }
+        });
+        
+        renderActiveLyrics(message.scriptType);
+      }
+    } 
+    
+    else if (message.type === "SYNC_COLLAPSE") {
+      if (panelElement) {
+        if (message.collapsed) {
+          panelElement.classList.add("collapsed");
+        } else {
+          panelElement.classList.remove("collapsed");
+        }
+      }
+    } 
+    
+    else if (message.type === "SYNC_POSITION") {
+      if (panelElement && !pipWindow) {
+        panelElement.style.top = message.position.top;
+        panelElement.style.left = message.position.left;
+        panelElement.style.right = "auto";
+      }
+    }
+    
+    return true;
+  });
+}
+
+/**
+ * Fetches current active synchronization states when content script initializes
+ */
+function requestInitialSyncState() {
+  chrome.runtime.sendMessage({ type: "GET_SYNC_STATE" }, (state) => {
+    if (chrome.runtime.lastError || !state) return;
+    
+    if (panelElement && state.position) {
+      panelElement.style.top = state.position.top;
+      panelElement.style.left = state.position.left;
+      panelElement.style.right = "auto";
+    }
+    
+    if (panelElement) {
+      if (state.collapsed) {
+        panelElement.classList.add("collapsed");
+      } else {
+        panelElement.classList.remove("collapsed");
+      }
+    }
+    
+    currentSelectedScript = state.scriptType;
+    
+    if (state.lyricsData) {
+      displayLyrics(state.lyricsData);
+      
+      setTimeout(() => {
+        const pills = document.querySelectorAll(".whisperify-pill");
+        pills.forEach(p => {
+          if (p.getAttribute("data-type") === state.scriptType) {
+            p.classList.add("active");
+          } else {
+            p.classList.remove("active");
+          }
+        });
+        renderActiveLyrics(state.scriptType);
+      }, 100);
+    }
+  });
 }
