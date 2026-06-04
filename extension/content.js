@@ -451,7 +451,7 @@ function displayLyrics(data) {
     selectorBar.style.display = "flex";
     selectorBar.innerHTML = `
       <button class="whisperify-pill active" data-type="original">Original</button>
-      ${data.romanized_text ? '<button class="whisperify-pill" data-type="roman">Romanized</button>' : ''}
+      ${data.romanized_text ? '<button class="whisperify-pill" data-type="roman">Hinglish</button>' : ''}
       ${data.translated_text ? '<button class="whisperify-pill" data-type="english">English</button>' : ''}
     `;
     
