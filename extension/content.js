@@ -13,6 +13,8 @@ let lastActiveIndex = -1;
 let currentLyricsData = null;
 let currentSelectedScript = "original";
 let scrapedLyricsSent = false;
+let lastScrapedPosition = -1;
+let lastScrapedTime = 0;
 
 const isYouTube = window.location.hostname.includes("youtube.com");
 
@@ -350,6 +352,8 @@ async function checkAndFetchLyrics(force = false) {
     currentTrack = currentScraped;
     currentLyricsData = null;
     scrapedLyricsSent = false;
+    lastScrapedPosition = -1;
+    lastScrapedTime = 0;
     console.log(`Whisperify: Track Changed -> ${currentTrack.title} by ${currentTrack.artist}`);
     
     if (panelElement && panelElement.classList.contains("collapsed")) {
@@ -596,6 +600,15 @@ function highlightLyricLine(index) {
 /**
  * Gets the current playback progress (in seconds) from the platform's media player
  */
+function isSpotifyPlaying() {
+  const pauseBtn = document.querySelector("[data-testid='control-button-pause']") || 
+                   document.querySelector("button[data-testid='play-button'] svg[path*='pause']");
+  return !!pauseBtn;
+}
+
+/**
+ * Gets the current playback progress (in seconds) from the platform's media player
+ */
 function getPlaybackPosition() {
   if (isYouTube) {
     const video = document.querySelector("video");
@@ -608,13 +621,32 @@ function getPlaybackPosition() {
     "div[class*='playback-bar'] div:first-child"
   ];
   
+  let rawTime = null;
   for (const selector of timeSelectors) {
     const el = document.querySelector(selector);
     if (el && el.textContent.trim()) {
-      return parseTimeStringToSeconds(el.textContent.trim());
+      rawTime = el.textContent.trim();
+      break;
     }
   }
-  return null;
+  
+  if (!rawTime) return null;
+  
+  const parsedSeconds = parseTimeStringToSeconds(rawTime);
+  const now = Date.now();
+  const playing = isSpotifyPlaying();
+  
+  if (parsedSeconds !== lastScrapedPosition) {
+    lastScrapedPosition = parsedSeconds;
+    lastScrapedTime = now;
+    return parsedSeconds;
+  } else {
+    if (playing && lastScrapedTime > 0) {
+      const elapsedSeconds = (now - lastScrapedTime) / 1000;
+      return parsedSeconds + Math.min(elapsedSeconds, 0.99);
+    }
+    return parsedSeconds;
+  }
 }
 
 /**
