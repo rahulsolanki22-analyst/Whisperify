@@ -13,6 +13,7 @@ let lastActiveIndex = -1;
 let currentLyricsData = null;
 let currentSelectedScript = "original";
 let scrapedLyricsSent = false;
+let pipWindow = null;
 
 const isYouTube = window.location.hostname.includes("youtube.com");
 
@@ -58,7 +59,10 @@ function injectFloatingPanel() {
         <span class="whisperify-logo-dot"></span>
         <span class="whisperify-title">Whisperify</span>
       </div>
-      <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="whisperify-pip-btn" id="whisperify-pip-trigger" title="Pop Out (Always on Top)" style="background:none; border:none; color:#b3b3b3; cursor:pointer; font-size:12px; display:flex; align-items:center; padding: 4px; transition: color 0.2s ease;">📺</button>
+        <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
+      </div>
     </div>
     
     <div class="whisperify-body">
@@ -108,6 +112,19 @@ function injectFloatingPanel() {
     e.stopPropagation(); // Avoid triggering header click
     checkAndFetchLyrics(true); // Force search
   });
+
+  // Bind PiP Action
+  const pipBtn = document.getElementById("whisperify-pip-trigger");
+  if (pipBtn) {
+    if (!('documentPictureInPicture' in window)) {
+      pipBtn.style.display = "none";
+    } else {
+      pipBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        togglePiP();
+      });
+    }
+  }
 }
 
 /**
@@ -688,7 +705,7 @@ function makePanelDraggable() {
   header.addEventListener("mousedown", dragMouseDown);
 
   function dragMouseDown(e) {
-    if (e.target.closest(".whisperify-toggle-btn")) return;
+    if (e.target.closest(".whisperify-toggle-btn") || e.target.closest(".whisperify-pip-btn")) return;
     
     e.preventDefault();
     pos3 = e.clientX;
@@ -740,4 +757,116 @@ function makePanelDraggable() {
       panelElement.classList.toggle("collapsed");
     }
   }
+}
+
+/**
+ * Toggles the Document Picture-in-Picture window (always-on-top pop-out)
+ */
+async function togglePiP() {
+  if (pipWindow) {
+    exitPiP();
+  } else {
+    await enterPiP();
+  }
+}
+
+/**
+ * Enters Picture-in-Picture mode, migrating the lyrics body to the always-on-top window
+ */
+async function enterPiP() {
+  if (!('documentPictureInPicture' in window)) return;
+  
+  try {
+    const body = document.querySelector(".whisperify-body");
+    if (!body) return;
+    
+    // Request always-on-top window matching original bounds
+    pipWindow = await window.documentPictureInPicture.requestWindow({
+      width: panelElement.offsetWidth,
+      height: panelElement.offsetHeight
+    });
+    
+    // Replicate document stylesheets
+    [...document.styleSheets].forEach((styleSheet) => {
+      try {
+        const cssRules = [...styleSheet.cssRules].map(rule => rule.cssText).join('');
+        const style = pipWindow.document.createElement('style');
+        style.textContent = cssRules;
+        pipWindow.document.head.appendChild(style);
+      } catch (e) {
+        if (styleSheet.href) {
+          const link = pipWindow.document.createElement('link');
+          link.rel = 'stylesheet';
+          link.href = styleSheet.href;
+          pipWindow.document.head.appendChild(link);
+        }
+      }
+    });
+    
+    // Style the new window document body
+    pipWindow.document.body.style.backgroundColor = "rgba(18, 18, 18, 1)";
+    pipWindow.document.body.style.margin = "0";
+    pipWindow.document.body.style.overflow = "hidden";
+    pipWindow.document.body.style.height = "100vh";
+    pipWindow.document.body.style.color = "#ffffff";
+    pipWindow.document.body.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
+    
+    // Create panel wrapper inside PiP frame
+    const wrapper = pipWindow.document.createElement("div");
+    wrapper.className = "whisperify-panel";
+    wrapper.style.position = "static";
+    wrapper.style.width = "100vw";
+    wrapper.style.height = "100vh";
+    wrapper.style.border = "none";
+    wrapper.style.borderRadius = "0";
+    wrapper.style.backgroundColor = "transparent";
+    wrapper.style.resize = "none";
+    
+    // Move body node to the pop-out window
+    wrapper.appendChild(body);
+    pipWindow.document.body.appendChild(wrapper);
+    
+    // Setup close callback
+    pipWindow.addEventListener("pagehide", () => {
+      exitPiP();
+    });
+    
+    // Hide parent page overlay panel
+    panelElement.style.display = "none";
+    
+    // Highlight button in green to indicate active state
+    const pipBtn = document.getElementById("whisperify-pip-trigger");
+    if (pipBtn) pipBtn.style.color = "#1db954";
+    
+  } catch (err) {
+    console.error("Whisperify: Failed to open Document PiP window:", err);
+  }
+}
+
+/**
+ * Exits Picture-in-Picture mode, restoring the lyrics body back to the main document page
+ */
+function exitPiP() {
+  if (!pipWindow) return;
+  
+  try {
+    const wrapper = pipWindow.document.querySelector(".whisperify-panel");
+    const body = wrapper ? wrapper.querySelector(".whisperify-body") : null;
+    
+    if (body) {
+      panelElement.appendChild(body);
+    }
+  } catch (e) {
+    console.error("Whisperify: Error restoring lyrics body node from PiP:", e);
+  }
+  
+  try {
+    pipWindow.close();
+  } catch (e) {}
+  
+  pipWindow = null;
+  panelElement.style.display = "flex";
+  
+  const pipBtn = document.getElementById("whisperify-pip-trigger");
+  if (pipBtn) pipBtn.style.color = "#b3b3b3";
 }

@@ -20,12 +20,16 @@
   overflow: hidden;
   transition: transform 0.3s cubic-bezier(0.25, 0.8, 0.25, 1), opacity 0.3s ease;
   user-select: none;
+  resize: both;
+  min-width: 240px;
+  min-height: 200px;
 }
 
 /* Collapsed state */
 .whisperify-panel.collapsed {
-  height: 48px;
+  height: 48px !important;
   transform: translateY(0);
+  resize: none !important;
 }
 
 /* Header element styling */
