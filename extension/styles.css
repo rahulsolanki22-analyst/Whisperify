@@ -280,3 +280,36 @@
 .whisperify-retry-btn:active {
   transform: scale(0.95);
 }
+
+/* Script Selector Bar (Original, Romanized, English translation pills) */
+.whisperify-script-selector {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+.whisperify-pill {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #b3b3b3;
+  padding: 4px 10px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.whisperify-pill:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.whisperify-pill.active {
+  background-color: #1db954;
+  color: #000000;
+  border-color: #1db954;
+}

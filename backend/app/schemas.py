@@ -10,6 +10,7 @@ class TrackInfoRequest(BaseModel):
     song_title: str = Field(..., description="The title of the song/track", min_length=1)
     duration_ms: Optional[int] = Field(None, description="The duration of the song in milliseconds")
     spotify_id: Optional[str] = Field(None, description="Optional Spotify track identifier")
+    scraped_lyrics_text: Optional[str] = Field(None, description="Lyrics text scraped from the client DOM")
 
 class TimestampLine(BaseModel):
     """
@@ -26,6 +27,13 @@ class LyricsResponse(BaseModel):
     song_title: str
     lyrics_text: Optional[str] = None
     timestamps: Optional[List[TimestampLine]] = None
+    
+    # Romanization & Translation fallbacks
+    romanized_text: Optional[str] = None
+    romanized_timestamps: Optional[List[TimestampLine]] = None
+    translated_text: Optional[str] = None
+    translated_timestamps: Optional[List[TimestampLine]] = None
+    
     source: str = Field(..., description="The successful source (e.g., 'cache', 'lrclib', 'genius', 'whisper')")
     is_cached: bool = Field(..., description="True if retrieved from database cache, False otherwise")
     created_at: datetime

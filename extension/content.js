@@ -10,6 +10,9 @@ let apiBaseUrl = "https://whisperify-2.onrender.com/api/v1";
 let syncInterval = null;
 let activeTimestamps = null;
 let lastActiveIndex = -1;
+let currentLyricsData = null;
+let currentSelectedScript = "original";
+let scrapedLyricsSent = false;
 
 const isYouTube = window.location.hostname.includes("youtube.com");
 
@@ -268,6 +271,53 @@ function setupTrackObservers() {
 }
 
 /**
+ * Scrapes lyrics dynamically from the Spotify page if the lyrics tab/modal is open
+ */
+function scrapeSpotifyLyrics() {
+  if (isYouTube) return null;
+
+  // Selectors for Spotify lyrics wrapper
+  const containerSelectors = [
+    "[data-testid='lyrics-content']",
+    ".lyrics-lyrics-content",
+    "[class*='lyricsContent-']"
+  ];
+
+  let container = null;
+  for (const s of containerSelectors) {
+    container = document.querySelector(s);
+    if (container) break;
+  }
+
+  if (!container) return null;
+
+  // Find all lyric lines
+  const lineSelectors = [
+    "[data-testid='lyrics-line']",
+    ".lyrics-lyricsContent-lyric",
+    "[class*='lyricsContent-lyric']",
+    "p",
+    "div"
+  ];
+
+  let lines = [];
+  for (const s of lineSelectors) {
+    const found = container.querySelectorAll(s);
+    if (found && found.length > 0) {
+      lines = Array.from(found)
+        .map(el => el.textContent.trim())
+        .filter(t => t.length > 0 && t !== "..." && !t.toLowerCase().startsWith("lyrics provider"));
+      if (lines.length > 0) break;
+    }
+  }
+
+  if (lines.length > 0) {
+    return lines.join("\n");
+  }
+  return null;
+}
+
+/**
  * Coordinates verifying track details and calling FastAPI backend
  */
 async function checkAndFetchLyrics(force = false) {
@@ -277,6 +327,8 @@ async function checkAndFetchLyrics(force = false) {
     if (currentTrack.title !== "") {
       currentTrack = { title: "", artist: "" };
       setPanelState("idle");
+      currentLyricsData = null;
+      scrapedLyricsSent = false;
     }
     return;
   }
@@ -285,20 +337,38 @@ async function checkAndFetchLyrics(force = false) {
   
   if (isNewSong || force) {
     currentTrack = currentScraped;
+    currentLyricsData = null;
+    scrapedLyricsSent = false;
     console.log(`Whisperify: Track Changed -> ${currentTrack.title} by ${currentTrack.artist}`);
     
     if (panelElement && panelElement.classList.contains("collapsed")) {
       panelElement.classList.remove("collapsed");
     }
 
-    await fetchLyricsFromBackend(currentTrack.title, currentTrack.artist);
+    const scraped = scrapeSpotifyLyrics();
+    if (scraped) {
+      scrapedLyricsSent = true;
+      await fetchLyricsFromBackend(currentTrack.title, currentTrack.artist, scraped);
+    } else {
+      await fetchLyricsFromBackend(currentTrack.title, currentTrack.artist);
+    }
+  } else {
+    // If lyrics are not yet loaded and we haven't scraped for this track, try scraping now
+    if (!currentLyricsData && !isSearching && !scrapedLyricsSent) {
+      const scraped = scrapeSpotifyLyrics();
+      if (scraped) {
+        scrapedLyricsSent = true;
+        console.log("Whisperify: Detected Spotify page lyrics. Uploading...");
+        await fetchLyricsFromBackend(currentTrack.title, currentTrack.artist, scraped);
+      }
+    }
   }
 }
 
 /**
  * Communicates with async FastAPI backend via POST requests
  */
-async function fetchLyricsFromBackend(title, artist) {
+async function fetchLyricsFromBackend(title, artist, scrapedLyricsText = null) {
   if (isSearching) return;
   isSearching = true;
 
@@ -313,7 +383,8 @@ async function fetchLyricsFromBackend(title, artist) {
       },
       body: JSON.stringify({
         artist: artist,
-        song_title: title
+        song_title: title,
+        scraped_lyrics_text: scrapedLyricsText
       })
     });
 
@@ -335,6 +406,9 @@ async function fetchLyricsFromBackend(title, artist) {
  * Updates UI to present found lyrics and initialize playback sync
  */
 function displayLyrics(data) {
+  currentLyricsData = data;
+  currentSelectedScript = "original";
+  
   setPanelState("lyrics");
   
   if (syncInterval) {
@@ -347,14 +421,82 @@ function displayLyrics(data) {
   
   const sourceBadge = document.getElementById("lyrics-source");
   sourceBadge.textContent = `${data.source}${data.is_cached ? " (cached)" : ""}`;
+
+  // Handle Selector Bar Injection/Visibility
+  const metadataBar = document.querySelector(".whisperify-metadata-bar");
+  let selectorBar = document.getElementById("script-selector-bar");
+  
+  // Create selector bar if it doesn't exist
+  if (!selectorBar) {
+    selectorBar = document.createElement("div");
+    selectorBar.id = "script-selector-bar";
+    selectorBar.className = "whisperify-script-selector";
+    metadataBar.appendChild(selectorBar);
+  }
+  
+  // Check if we have transliteration/translation data available
+  const hasTranslations = !!(data.romanized_text || data.translated_text);
+  
+  if (hasTranslations) {
+    selectorBar.style.display = "flex";
+    selectorBar.innerHTML = `
+      <button class="whisperify-pill active" data-type="original">Original</button>
+      ${data.romanized_text ? '<button class="whisperify-pill" data-type="roman">Romanized</button>' : ''}
+      ${data.translated_text ? '<button class="whisperify-pill" data-type="english">English</button>' : ''}
+    `;
+    
+    // Attach event listeners to pills
+    const pills = selectorBar.querySelectorAll(".whisperify-pill");
+    pills.forEach(pill => {
+      pill.addEventListener("click", (e) => {
+        e.stopPropagation();
+        const selectedType = pill.getAttribute("data-type");
+        if (selectedType === currentSelectedScript) return;
+        
+        pills.forEach(p => p.classList.remove("active"));
+        pill.classList.add("active");
+        
+        currentSelectedScript = selectedType;
+        renderActiveLyrics(selectedType);
+      });
+    });
+  } else {
+    selectorBar.style.display = "none";
+    selectorBar.innerHTML = "";
+  }
+
+  renderActiveLyrics("original");
+}
+
+function renderActiveLyrics(type) {
+  if (!currentLyricsData) return;
+  
+  if (syncInterval) {
+    clearInterval(syncInterval);
+    syncInterval = null;
+  }
   
   const textContainer = document.getElementById("lyrics-text-block");
   textContainer.innerHTML = ""; // Reset block
-
-  if (data.timestamps && data.timestamps.length > 0) {
-    console.log(`Whisperify: Synced lyrics loaded (${data.timestamps.length} lines). Starting sync loop.`);
+  
+  let timestamps = null;
+  let fallbackText = "";
+  
+  if (type === "roman") {
+    timestamps = currentLyricsData.romanized_timestamps;
+    fallbackText = currentLyricsData.romanized_text;
+  } else if (type === "english") {
+    timestamps = currentLyricsData.translated_timestamps;
+    fallbackText = currentLyricsData.translated_text;
+  } else {
+    timestamps = currentLyricsData.timestamps;
+    fallbackText = currentLyricsData.lyrics_text;
+  }
+  
+  if (timestamps && timestamps.length > 0) {
+    console.log(`Whisperify: Synced lyrics loaded (${type}: ${timestamps.length} lines). Starting sync loop.`);
     
-    data.timestamps.forEach((line, index) => {
+    timestamps.forEach((line, index) => {
       const p = document.createElement("p");
       p.className = "lyric-line";
       p.setAttribute("data-time", line.time);
@@ -363,15 +505,15 @@ function displayLyrics(data) {
       textContainer.appendChild(p);
     });
     
-    startLyricsSync(data.timestamps);
-  } else if (data.lyrics_text) {
-    console.log("Whisperify: Plain text lyrics loaded. Displaying static block.");
+    startLyricsSync(timestamps);
+  } else if (fallbackText) {
+    console.log(`Whisperify: Plain text lyrics loaded (${type}). Displaying static block.`);
     const p = document.createElement("p");
     p.style.whiteSpace = "pre-line";
     p.style.lineHeight = "1.8";
     p.style.fontSize = "15px";
     p.style.fontWeight = "600";
-    p.textContent = data.lyrics_text;
+    p.textContent = fallbackText;
     textContainer.appendChild(p);
   } else {
     textContainer.textContent = "Empty lyrics response from source.";

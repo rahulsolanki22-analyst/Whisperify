@@ -27,6 +27,14 @@ class CachedLyrics(Base):
     #   {"time": 18.2, "text": "But she hears only whispers of some quiet conversation"}
     # ]
     timestamps: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Keyless Transliteration (Romanized text and timestamps)
+    romanized_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    romanized_timestamps: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
+
+    # Keyless Translation (English text and timestamps)
+    translated_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    translated_timestamps: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSON, nullable=True)
     
     # Metadata tracking where the lyrics came from (e.g., 'native', 'lrclib', 'genius', 'whisper')
     source: Mapped[str] = mapped_column(String(50), default="unknown", nullable=False)
