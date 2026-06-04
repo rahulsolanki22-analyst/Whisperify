@@ -102,6 +102,15 @@ function injectFloatingPanel() {
   // Initialize smooth drag movement
   makePanelDraggable();
 
+  // Bind toggle button directly
+  const toggleBtn = panelElement.querySelector(".whisperify-toggle-btn");
+  if (toggleBtn) {
+    toggleBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      panelElement.classList.toggle("collapsed");
+    });
+  }
+
   // Bind Retry Action
   const retryBtn = document.getElementById("whisperify-retry-trigger");
   retryBtn.addEventListener("click", (e) => {
