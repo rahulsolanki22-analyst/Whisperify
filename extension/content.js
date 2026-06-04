@@ -15,6 +15,7 @@ let currentSelectedScript = "original";
 let scrapedLyricsSent = false;
 let lastScrapedPosition = -1;
 let lastScrapedTime = 0;
+let syncOffset = parseFloat(localStorage.getItem("whisperify_sync_offset") || "0.80");
 
 const isYouTube = window.location.hostname.includes("youtube.com");
 
@@ -60,6 +61,11 @@ function injectFloatingPanel() {
         <span class="whisperify-logo-dot"></span>
         <span class="whisperify-title">Whisperify</span>
       </div>
+      <div class="whisperify-sync-adjuster" style="display: flex; align-items: center; gap: 6px; margin-left: auto; margin-right: 12px; font-size: 11px;">
+        <button id="whisperify-sync-minus" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #ffffff; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: bold; transition: all 0.2s;" title="Show lyrics later">-</button>
+        <span id="whisperify-sync-label" style="color: #1db954; font-weight: 700; min-width: 34px; text-align: center;" title="Latency compensation offset">0.80s</span>
+        <button id="whisperify-sync-plus" style="background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.1); color: #ffffff; width: 18px; height: 18px; display: flex; align-items: center; justify-content: center; border-radius: 4px; cursor: pointer; font-size: 10px; font-weight: bold; transition: all 0.2s;" title="Show lyrics sooner">+</button>
+      </div>
       <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
     </div>
     
@@ -104,12 +110,37 @@ function injectFloatingPanel() {
   // Initialize smooth drag movement
   makePanelDraggable();
 
-  // Bind toggle button directly
+  // Initialize toggle button directly
   const toggleBtn = panelElement.querySelector(".whisperify-toggle-btn");
   if (toggleBtn) {
     toggleBtn.addEventListener("click", (e) => {
       e.stopPropagation();
       panelElement.classList.toggle("collapsed");
+    });
+  }
+
+  // Bind manual sync adjustments
+  const syncLabel = panelElement.querySelector("#whisperify-sync-label");
+  const btnMinus = panelElement.querySelector("#whisperify-sync-minus");
+  const btnPlus = panelElement.querySelector("#whisperify-sync-plus");
+  
+  if (syncLabel) syncLabel.textContent = `${syncOffset.toFixed(2)}s`;
+  
+  if (btnMinus) {
+    btnMinus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      syncOffset = Math.max(0.0, syncOffset - 0.05); // shift 50ms later
+      localStorage.setItem("whisperify_sync_offset", syncOffset.toString());
+      if (syncLabel) syncLabel.textContent = `${syncOffset.toFixed(2)}s`;
+    });
+  }
+  
+  if (btnPlus) {
+    btnPlus.addEventListener("click", (e) => {
+      e.stopPropagation();
+      syncOffset = Math.min(3.0, syncOffset + 0.05); // shift 50ms earlier
+      localStorage.setItem("whisperify_sync_offset", syncOffset.toString());
+      if (syncLabel) syncLabel.textContent = `${syncOffset.toFixed(2)}s`;
     });
   }
 
@@ -547,7 +578,6 @@ function renderActiveLyrics(type) {
  * Initializes the real-time time-sync highlight loop (100ms high-precision polling rate)
  */
 function startLyricsSync(timestamps) {
-  const LATENCY_COMPENSATION = 0.80; // Compensate for Spotify React DOM time render lags (800ms)
   activeTimestamps = timestamps;
   lastActiveIndex = -1;
   
@@ -559,7 +589,7 @@ function startLyricsSync(timestamps) {
     const currentTime = getPlaybackPosition();
     if (currentTime === null) return;
     
-    const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
+    const adjustedTime = currentTime + syncOffset;
     
     let activeIndex = -1;
     for (let i = 0; i < activeTimestamps.length; i++) {
@@ -581,15 +611,25 @@ function startLyricsSync(timestamps) {
  * Highlights the target lyric line and smooth scrolls it into the center of the panel
  */
 function highlightLyricLine(index) {
-  const container = document.getElementById("lyrics-text-block");
-  const lines = container.querySelectorAll(".lyric-line");
+  const bodyContainer = document.querySelector(".whisperify-body");
+  const textBlock = document.getElementById("lyrics-text-block");
+  if (!bodyContainer || !textBlock) return;
+
+  const lines = textBlock.querySelectorAll(".lyric-line");
   
   lines.forEach((lineEl, i) => {
     if (i === index) {
       lineEl.classList.add("active");
-      lineEl.scrollIntoView({
-        behavior: "smooth",
-        block: "center"
+      
+      const containerHeight = bodyContainer.clientHeight;
+      const lineOffsetTop = lineEl.offsetTop;
+      const lineHeight = lineEl.clientHeight;
+      
+      const targetScrollTop = lineOffsetTop - (containerHeight / 2) + (lineHeight / 2);
+      
+      bodyContainer.scrollTo({
+        top: Math.max(0, targetScrollTop),
+        behavior: "smooth"
       });
     } else {
       lineEl.classList.remove("active");
@@ -729,7 +769,9 @@ function makePanelDraggable() {
   header.addEventListener("mousedown", dragMouseDown);
 
   function dragMouseDown(e) {
-    if (e.target.closest(".whisperify-toggle-btn")) return;
+    if (e.target.closest(".whisperify-toggle-btn") || 
+        e.target.closest("#whisperify-sync-minus") || 
+        e.target.closest("#whisperify-sync-plus")) return;
     
     e.preventDefault();
     pos3 = e.clientX;
