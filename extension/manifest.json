@@ -8,6 +8,7 @@
   ],
   "host_permissions": [
     "http://localhost:8080/*",
+    "https://whisperify-2.onrender.com/*",
     "*://open.spotify.com/*",
     "*://*.spotify.com/*",
     "*://*.youtube.com/*"
