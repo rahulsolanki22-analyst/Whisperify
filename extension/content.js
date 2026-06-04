@@ -276,44 +276,46 @@ function setupTrackObservers() {
 function scrapeSpotifyLyrics() {
   if (isYouTube) return null;
 
-  // Selectors for Spotify lyrics wrapper
-  const containerSelectors = [
-    "[data-testid='lyrics-content']",
-    ".lyrics-lyrics-content",
-    "[class*='lyricsContent-']"
-  ];
-
-  let container = null;
-  for (const s of containerSelectors) {
-    container = document.querySelector(s);
-    if (container) break;
-  }
-
-  if (!container) return null;
-
-  // Find all lyric lines
+  // Find lyric lines directly in the DOM
   const lineSelectors = [
     "[data-testid='lyrics-line']",
     ".lyrics-lyricsContent-lyric",
-    "[class*='lyricsContent-lyric']",
-    "p",
-    "div"
+    "[class*='lyricsContent-lyric']"
   ];
 
-  let lines = [];
+  let found = [];
   for (const s of lineSelectors) {
-    const found = container.querySelectorAll(s);
-    if (found && found.length > 0) {
-      lines = Array.from(found)
+    const elements = document.querySelectorAll(s);
+    if (elements && elements.length > 0) {
+      found = Array.from(elements)
         .map(el => el.textContent.trim())
         .filter(t => t.length > 0 && t !== "..." && !t.toLowerCase().startsWith("lyrics provider"));
-      if (lines.length > 0) break;
+      if (found.length > 0) {
+        console.log(`Whisperify: Scraped ${found.length} lines directly using selector '${s}'`);
+        break;
+      }
     }
   }
 
-  if (lines.length > 0) {
-    return lines.join("\n");
+  if (found.length > 0) {
+    return found.join("\n");
   }
+  
+  // Fallback: search for any paragraph/div inside a generic lyrics wrapper if standard selectors failed
+  const wrapper = document.querySelector("[class*='lyrics']");
+  if (wrapper) {
+    const paragraphs = wrapper.querySelectorAll("p, div");
+    if (paragraphs && paragraphs.length > 0) {
+      const text = Array.from(paragraphs)
+        .map(el => el.textContent.trim())
+        .filter(t => t.length > 0 && t.length < 200 && !t.toLowerCase().startsWith("lyrics provider"));
+      if (text.length > 5) {
+        console.log("Whisperify: Scraped lines using fallback wrapper paragraph match");
+        return text.join("\n");
+      }
+    }
+  }
+
   return null;
 }
 
