@@ -13,10 +13,8 @@ let lastActiveIndex = -1;
 let currentLyricsData = null;
 let currentSelectedScript = "original";
 let scrapedLyricsSent = false;
-let pipWindow = null;
 
 const isYouTube = window.location.hostname.includes("youtube.com");
-const isPlayerTab = window.location.hostname.includes("spotify.com") || window.location.hostname.includes("youtube.com");
 
 // DOM References
 let panelElement = null;
@@ -35,20 +33,12 @@ function initWhisperify() {
   } catch (err) {
     console.error("Whisperify: Failed to inject floating panel:", err);
   }
-
-  // Setup message listener bindings
-  setupMessageListeners();
   
-  // Request active synchronization state
-  requestInitialSyncState();
-  
-  if (isPlayerTab) {
-    try {
-      setupTrackObservers();
-      console.log("Whisperify: Observers initialized successfully.");
-    } catch (err) {
-      console.error("Whisperify: Failed to initialize observers:", err);
-    }
+  try {
+    setupTrackObservers();
+    console.log("Whisperify: Observers initialized successfully.");
+  } catch (err) {
+    console.error("Whisperify: Failed to initialize observers:", err);
   }
 }
 
@@ -68,10 +58,7 @@ function injectFloatingPanel() {
         <span class="whisperify-logo-dot"></span>
         <span class="whisperify-title">Whisperify</span>
       </div>
-      <div style="display: flex; gap: 8px; align-items: center;">
-        <button class="whisperify-pip-btn" id="whisperify-pip-trigger" title="Pop Out (Always on Top)" style="background:none; border:none; color:#b3b3b3; cursor:pointer; font-size:12px; display:flex; align-items:center; padding: 4px; transition: color 0.2s ease;">📺</button>
-        <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
-      </div>
+      <button class="whisperify-toggle-btn" aria-label="Toggle Panel">▼</button>
     </div>
     
     <div class="whisperify-body">
@@ -121,19 +108,6 @@ function injectFloatingPanel() {
     e.stopPropagation(); // Avoid triggering header click
     checkAndFetchLyrics(true); // Force search
   });
-
-  // Bind PiP Action
-  const pipBtn = document.getElementById("whisperify-pip-trigger");
-  if (pipBtn) {
-    if (!('documentPictureInPicture' in window)) {
-      pipBtn.style.display = "none";
-    } else {
-      pipBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        togglePiP();
-      });
-    }
-  }
 }
 
 /**
@@ -434,14 +408,6 @@ async function fetchLyricsFromBackend(title, artist, scrapedLyricsText = null) {
  * Updates UI to present found lyrics and initialize playback sync
  */
 function displayLyrics(data) {
-  // Synchronize payload to display clients if this is the active player
-  if (isPlayerTab) {
-    safeSendMessage({
-      type: "UPDATE_LYRICS",
-      lyricsData: data
-    });
-  }
-
   const hasLyrics = (data.timestamps && data.timestamps.length > 0) || (data.lyrics_text && data.lyrics_text.trim().length > 0);
   
   if (!hasLyrics) {
@@ -502,12 +468,6 @@ function displayLyrics(data) {
         
         currentSelectedScript = selectedType;
         renderActiveLyrics(selectedType);
-        
-        // Notify other displays of active script change
-        safeSendMessage({
-          type: "CHANGE_SCRIPT",
-          scriptType: selectedType
-        });
       });
     });
   } else {
@@ -571,66 +531,37 @@ function renderActiveLyrics(type) {
 }
 
 /**
- * Synchronizes playback position received from the active player tab
- */
-function syncPlaybackPosition(currentTime, isYT) {
-  if (!activeTimestamps || activeTimestamps.length === 0) return;
-  const LATENCY_COMPENSATION = 0.35;
-  const adjustedTime = currentTime + (isYT ? 0.0 : LATENCY_COMPENSATION);
-  highlightLyricIndexForTime(adjustedTime);
-}
-
-/**
- * Common highlight resolver based on adjusted seconds
- */
-function highlightLyricIndexForTime(adjustedTime) {
-  let activeIndex = -1;
-  for (let i = 0; i < activeTimestamps.length; i++) {
-    if (adjustedTime >= activeTimestamps[i].time) {
-      activeIndex = i;
-    } else {
-      break;
-    }
-  }
-  
-  if (activeIndex !== -1 && activeIndex !== lastActiveIndex) {
-    highlightLyricLine(activeIndex);
-    lastActiveIndex = activeIndex;
-  }
-}
-
-/**
  * Initializes the real-time time-sync highlight loop (100ms high-precision polling rate)
  */
 function startLyricsSync(timestamps) {
+  const LATENCY_COMPENSATION = 0.35; // Compensate for Spotify React DOM time render lags (350ms)
   activeTimestamps = timestamps;
   lastActiveIndex = -1;
   
   if (syncInterval) clearInterval(syncInterval);
   
-  if (isPlayerTab) {
-    const LATENCY_COMPENSATION = 0.35;
+  syncInterval = setInterval(() => {
+    if (!activeTimestamps || activeTimestamps.length === 0) return;
     
-    syncInterval = setInterval(() => {
-      if (!activeTimestamps || activeTimestamps.length === 0) return;
-      
-      const currentTime = getPlaybackPosition();
-      if (currentTime === null) return;
-      
-      const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
-      
-      // Update background with active playbar timeline progress
-      safeSendMessage({
-        type: "UPDATE_PLAYBACK",
-        currentTime: currentTime,
-        isYouTube: isYouTube,
-        title: currentTrack.title,
-        artist: currentTrack.artist
-      });
-      
-      highlightLyricIndexForTime(adjustedTime);
-    }, 100);
-  }
+    const currentTime = getPlaybackPosition();
+    if (currentTime === null) return;
+    
+    const adjustedTime = currentTime + (isYouTube ? 0.0 : LATENCY_COMPENSATION);
+    
+    let activeIndex = -1;
+    for (let i = 0; i < activeTimestamps.length; i++) {
+      if (adjustedTime >= activeTimestamps[i].time) {
+        activeIndex = i;
+      } else {
+        break;
+      }
+    }
+    
+    if (activeIndex !== -1 && activeIndex !== lastActiveIndex) {
+      highlightLyricLine(activeIndex);
+      lastActiveIndex = activeIndex;
+    }
+  }, 100);
 }
 
 /**
@@ -757,7 +688,7 @@ function makePanelDraggable() {
   header.addEventListener("mousedown", dragMouseDown);
 
   function dragMouseDown(e) {
-    if (e.target.closest(".whisperify-toggle-btn") || e.target.closest(".whisperify-pip-btn")) return;
+    if (e.target.closest(".whisperify-toggle-btn")) return;
     
     e.preventDefault();
     pos3 = e.clientX;
@@ -806,248 +737,7 @@ function makePanelDraggable() {
     document.onmousemove = null;
     
     if (!isDragging) {
-      const isCollapsed = panelElement.classList.toggle("collapsed");
-      safeSendMessage({
-        type: "TOGGLE_PANEL",
-        collapsed: isCollapsed
-      });
-    } else {
-      safeSendMessage({
-        type: "MOVE_PANEL",
-        top: panelElement.style.top,
-        left: panelElement.style.left
-      });
+      panelElement.classList.toggle("collapsed");
     }
-  }
-}
-
-/**
- * Toggles the Document Picture-in-Picture window (always-on-top pop-out)
- */
-async function togglePiP() {
-  if (pipWindow) {
-    exitPiP();
-  } else {
-    await enterPiP();
-  }
-}
-
-/**
- * Enters Picture-in-Picture mode, migrating the lyrics body to the always-on-top window
- */
-async function enterPiP() {
-  if (!('documentPictureInPicture' in window)) return;
-  
-  try {
-    const body = document.querySelector(".whisperify-body");
-    if (!body) return;
-    
-    // Request always-on-top window matching original bounds
-    pipWindow = await window.documentPictureInPicture.requestWindow({
-      width: panelElement.offsetWidth,
-      height: panelElement.offsetHeight
-    });
-    
-    // Replicate document stylesheets
-    [...document.styleSheets].forEach((styleSheet) => {
-      try {
-        const cssRules = [...styleSheet.cssRules].map(rule => rule.cssText).join('');
-        const style = pipWindow.document.createElement('style');
-        style.textContent = cssRules;
-        pipWindow.document.head.appendChild(style);
-      } catch (e) {
-        if (styleSheet.href) {
-          const link = pipWindow.document.createElement('link');
-          link.rel = 'stylesheet';
-          link.href = styleSheet.href;
-          pipWindow.document.head.appendChild(link);
-        }
-      }
-    });
-    
-    // Style the new window document body
-    pipWindow.document.body.style.backgroundColor = "rgba(18, 18, 18, 1)";
-    pipWindow.document.body.style.margin = "0";
-    pipWindow.document.body.style.overflow = "hidden";
-    pipWindow.document.body.style.height = "100vh";
-    pipWindow.document.body.style.color = "#ffffff";
-    pipWindow.document.body.style.fontFamily = "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif";
-    
-    // Create panel wrapper inside PiP frame
-    const wrapper = pipWindow.document.createElement("div");
-    wrapper.className = "whisperify-panel";
-    wrapper.style.position = "static";
-    wrapper.style.width = "100vw";
-    wrapper.style.height = "100vh";
-    wrapper.style.border = "none";
-    wrapper.style.borderRadius = "0";
-    wrapper.style.backgroundColor = "transparent";
-    wrapper.style.resize = "none";
-    
-    // Move body node to the pop-out window
-    wrapper.appendChild(body);
-    pipWindow.document.body.appendChild(wrapper);
-    
-    // Setup close callback
-    pipWindow.addEventListener("pagehide", () => {
-      exitPiP();
-    });
-    
-    // Hide parent page overlay panel
-    panelElement.style.display = "none";
-    
-    // Highlight button in green to indicate active state
-    const pipBtn = document.getElementById("whisperify-pip-trigger");
-    if (pipBtn) pipBtn.style.color = "#1db954";
-    
-  } catch (err) {
-    console.error("Whisperify: Failed to open Document PiP window:", err);
-  }
-}
-
-/**
- * Exits Picture-in-Picture mode, restoring the lyrics body back to the main document page
- */
-function exitPiP() {
-  if (!pipWindow) return;
-  
-  try {
-    const wrapper = pipWindow.document.querySelector(".whisperify-panel");
-    const body = wrapper ? wrapper.querySelector(".whisperify-body") : null;
-    
-    if (body) {
-      panelElement.appendChild(body);
-    }
-  } catch (e) {
-    console.error("Whisperify: Error restoring lyrics body node from PiP:", e);
-  }
-  
-  try {
-    pipWindow.close();
-  } catch (e) {}
-  
-  pipWindow = null;
-  panelElement.style.display = "flex";
-  
-  const pipBtn = document.getElementById("whisperify-pip-trigger");
-  if (pipBtn) pipBtn.style.color = "#b3b3b3";
-}
-
-/**
- * Message receivers for background worker synchronized updates
- */
-function setupMessageListeners() {
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "SYNC_PLAYBACK") {
-      if (!isPlayerTab) {
-        currentTrack = { title: message.title, artist: message.artist };
-        syncPlaybackPosition(message.currentTime, message.isYouTube);
-      }
-    } 
-    
-    else if (message.type === "SYNC_LYRICS") {
-      console.log("Whisperify: Synced lyrics loaded from background.");
-      displayLyrics(message.lyricsData);
-    } 
-    
-    else if (message.type === "SYNC_SCRIPT") {
-      if (currentSelectedScript !== message.scriptType) {
-        currentSelectedScript = message.scriptType;
-        
-        const pills = document.querySelectorAll(".whisperify-pill");
-        pills.forEach(p => {
-          if (p.getAttribute("data-type") === message.scriptType) {
-            p.classList.add("active");
-          } else {
-            p.classList.remove("active");
-          }
-        });
-        
-        renderActiveLyrics(message.scriptType);
-      }
-    } 
-    
-    else if (message.type === "SYNC_COLLAPSE") {
-      if (panelElement) {
-        if (message.collapsed) {
-          panelElement.classList.add("collapsed");
-        } else {
-          panelElement.classList.remove("collapsed");
-        }
-      }
-    } 
-    
-    else if (message.type === "SYNC_POSITION") {
-      if (panelElement && !pipWindow) {
-        panelElement.style.top = message.position.top;
-        panelElement.style.left = message.position.left;
-        panelElement.style.right = "auto";
-      }
-    }
-    
-    return true;
-  });
-}
-
-/**
- * Fetches current active synchronization states when content script initializes
- */
-function requestInitialSyncState() {
-  safeSendMessage({ type: "GET_SYNC_STATE" }, (state) => {
-    if (!state) return;
-    
-    if (panelElement && state.position) {
-      panelElement.style.top = state.position.top;
-      panelElement.style.left = state.position.left;
-      panelElement.style.right = "auto";
-    }
-    
-    if (panelElement) {
-      if (state.collapsed) {
-        panelElement.classList.add("collapsed");
-      } else {
-        panelElement.classList.remove("collapsed");
-      }
-    }
-    
-    currentSelectedScript = state.scriptType;
-    
-    if (state.lyricsData) {
-      displayLyrics(state.lyricsData);
-      
-      setTimeout(() => {
-        const pills = document.querySelectorAll(".whisperify-pill");
-        pills.forEach(p => {
-          if (p.getAttribute("data-type") === state.scriptType) {
-            p.classList.add("active");
-          } else {
-            p.classList.remove("active");
-          }
-        });
-        renderActiveLyrics(state.scriptType);
-      }, 100);
-    }
-  });
-}
-
-/**
- * Safely dispatches message to Chrome background extension context, catching invalidations
- */
-function safeSendMessage(payload, callback = null) {
-  try {
-    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.id) {
-      if (callback) {
-        chrome.runtime.sendMessage(payload, (response) => {
-          if (chrome.runtime.lastError) {
-            return;
-          }
-          callback(response);
-        });
-      } else {
-        chrome.runtime.sendMessage(payload);
-      }
-    }
-  } catch (err) {
-    // Ignore context invalidations from extension updates/reloads gracefully
   }
 }
